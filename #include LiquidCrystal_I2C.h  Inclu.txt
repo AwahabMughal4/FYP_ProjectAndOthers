@@ -1,0 +1,124 @@
+#include <LiquidCrystal_I2C.h> // Include the LiquidCrystal library for I2C
+#include <Wire.h>              // Include the Wire library for I2C
+
+#define MQ2_PIN A0             // Define the analog pin for MQ-2 sensor
+#define MQ135_PIN A1           // Define the analog pin for MQ-135 sensor
+#define RELAY_PIN_1 2          // Define the digital pin for relay 1
+#define RELAY_PIN_2 3          // Define the digital pin for relay 2
+#define LED_ADDRESS 0x27       // Address of your 16x2 LED display
+
+LiquidCrystal_I2C lcd(LED_ADDRESS, 16, 2); // Initialize the LCD object
+
+// Baseline values for MQ-2 sensor
+int baselineLPG = 0;
+int baselineSmoke = 0;
+int baselineCO2 = 0;
+const int NUM_CALIBRATION_READINGS = 10;
+
+// Noise threshold
+const int NOISE_THRESHOLD = 5;
+
+unsigned long previousMillis = 0;
+const long interval = 1000; // Update interval in milliseconds
+
+int scrollPosition = 0; // Position for scrolling
+
+void setup() {
+  lcd.init();               // Initialize the LCD
+  lcd.backlight();          // Turn on the backlight
+  lcd.clear();              // Clear the LCD screen
+  Serial.begin(9600);       // Initialize serial communication
+  
+  pinMode(MQ2_PIN, INPUT);    // Set MQ-2 pin as input
+  pinMode(MQ135_PIN, INPUT);  // Set MQ-135 pin as input
+  pinMode(RELAY_PIN_1, OUTPUT); // Set relay pin 1 as output
+  pinMode(RELAY_PIN_2, OUTPUT); // Set relay pin 2 as output
+
+  // Initialize baseline values to zero
+  baselineLPG = 0;
+  baselineSmoke = 0;
+  baselineCO2 = 0;
+
+  // Calibrate MQ-2 sensor
+  delay(10000); // Allow time for sensor to stabilize
+  calibrateMQ2Sensor();
+}
+
+void calibrateMQ2Sensor() {
+  int sumLPG = 0;
+  int sumSmoke = 0;
+  int sumCO2 = 0;
+
+  // Take multiple readings and calculate the average
+  for (int i = 0; i < NUM_CALIBRATION_READINGS; ++i) {
+    sumLPG += analogRead(MQ2_PIN);
+    sumSmoke += analogRead(MQ2_PIN);
+    sumCO2 += analogRead(MQ2_PIN);
+    delay(1000); // Delay between readings
+  }
+
+  baselineLPG = sumLPG / NUM_CALIBRATION_READINGS;
+  baselineSmoke = sumSmoke / NUM_CALIBRATION_READINGS;
+  baselineCO2 = sumCO2 / NUM_CALIBRATION_READINGS;
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    // Read the raw sensor values of LPG, Smoke, and CO2 using MQ-2 sensor
+    int lpgValue = max(0, analogRead(MQ2_PIN) - baselineLPG);     // Read the LPG value
+    int smokeValue = max(0, analogRead(MQ2_PIN) - baselineSmoke);   // Read the Smoke value
+    int co2Value = max(0, analogRead(MQ2_PIN) - baselineCO2);     // Read the CO2 value
+
+    // Check for noise and ignore values below the threshold
+    if (lpgValue < NOISE_THRESHOLD) lpgValue = 0;
+    if (smokeValue < NOISE_THRESHOLD) smokeValue = 0;
+    if (co2Value < NOISE_THRESHOLD) co2Value = 0;
+
+    // Read the air quality value using MQ-135 sensor
+    int airQualityValue = analogRead(MQ135_PIN);
+
+    // Print the raw sensor values of LPG, Smoke, and CO2 on the LCD and serial monitor
+    lcd.clear(); // Clear the LCD screen
+    lcd.setCursor(scrollPosition, 0); // Set cursor to the first row
+    lcd.print("LPG: ");
+    lcd.print(lpgValue);
+    lcd.print(" Smoke: ");
+    lcd.print(smokeValue);
+    lcd.print(" CO2: ");
+    lcd.print(co2Value);
+
+    Serial.print("LPG: ");
+    Serial.print(lpgValue);
+    Serial.print(" Smoke: ");
+    Serial.print(smokeValue);
+    Serial.print(" CO2: ");
+    Serial.print(co2Value);
+    
+    // Print the air quality value on the LCD and serial monitor
+    lcd.setCursor(0, 1); // Set cursor to the second row
+    lcd.print("Air Quality: ");
+    lcd.print(airQualityValue);
+
+    Serial.print(" Air Quality: ");
+    Serial.println(airQualityValue);
+    
+    // Control the relay based on sensor readings
+    if (lpgValue > NOISE_THRESHOLD || smokeValue > NOISE_THRESHOLD || co2Value > NOISE_THRESHOLD) {
+      digitalWrite(RELAY_PIN_1, LOW); // Turn on relay 1
+      digitalWrite(RELAY_PIN_2, LOW); // Turn on relay 2
+    } else {
+      digitalWrite(RELAY_PIN_1, HIGH); // Turn off relay 1
+      digitalWrite(RELAY_PIN_2, HIGH); // Turn off relay 2
+    }
+    
+    // Increment scroll position and reset if it exceeds LCD width
+    scrollPosition--;
+    if (scrollPosition < -15) {
+      scrollPosition = 0;
+    }
+  }
+}
